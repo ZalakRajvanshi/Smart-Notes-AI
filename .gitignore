@@ -12,3 +12,8 @@ Thumbs.db
 
 # IDE
 .vscode/
+
+# local testing
+local_test/
+test_layout.py
+
