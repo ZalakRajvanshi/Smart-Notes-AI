@@ -1,6 +1,11 @@
 from symspellpy import SymSpell, Verbosity
+from textblob import TextBlob
 import os
 import re
+
+# ---------------------------
+# SYMSPELL SETUP
+# ---------------------------
 
 MAX_EDIT_DISTANCE = 2
 PREFIX_LENGTH = 7
@@ -24,21 +29,15 @@ if not symspell.word_count:
     )
 
 
-# -------------------------
-# TOKEN-LEVEL CORRECTION
-# -------------------------
+# ---------------------------
+# SAFE WORD CORRECTION
+# ---------------------------
 
-def _safe_correct_word(word: str) -> str:
-    """
-    Conservative correction for a single word.
-    """
-
-    # Skip numbers, symbols
+def _safe_symspell(word: str) -> str:
     if not word.isalpha():
         return word
 
-    # 🔒 Protect long / technical words
-    if len(word) >= 12:
+    if len(word) >= 12:  # protect technical words
         return word
 
     suggestions = symspell.lookup(
@@ -52,35 +51,54 @@ def _safe_correct_word(word: str) -> str:
 
     best = suggestions[0].term
 
-    # Prevent drastic length changes
+    # prevent wild replacements
     if abs(len(best) - len(word)) > 2:
         return word
 
     return best
 
 
-# -------------------------
-# LINE-LEVEL CORRECTION
-# -------------------------
+# ---------------------------
+# TEXTBLOB (VERY LIMITED)
+# ---------------------------
+
+def _light_textblob(text: str) -> str:
+    """
+    Grammar smoothing ONLY.
+    No aggressive correction.
+    """
+    try:
+        blob = TextBlob(text)
+        corrected = str(blob.correct())
+
+        # Safety: reject if too different
+        if abs(len(corrected) - len(text)) > len(text) * 0.3:
+            return text
+
+        return corrected
+    except Exception:
+        return text
+
+
+# ---------------------------
+# MAIN ENTRY
+# ---------------------------
 
 def correct_text(text: str) -> str:
-    """
-    Safe OCR post-correction.
-    """
-
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return text
 
+    # --- Step 1: SymSpell (token-level) ---
     words = text.split(" ")
-    corrected_words = []
+    symspell_fixed = " ".join(
+        [_safe_symspell(w) for w in words]
+    )
 
-    for w in words:
-        corrected_words.append(_safe_correct_word(w))
+    # --- Step 2: TextBlob (light polish) ---
+    final_text = _light_textblob(symspell_fixed)
 
-    corrected = " ".join(corrected_words)
+    # Capitalize sentence
+    final_text = final_text[0].upper() + final_text[1:] if final_text else final_text
 
-    # Capitalize sentence start
-    corrected = corrected[0].upper() + corrected[1:] if corrected else corrected
-
-    return corrected
+    return final_text

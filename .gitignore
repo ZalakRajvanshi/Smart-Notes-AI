@@ -17,3 +17,5 @@ Thumbs.db
 local_test/
 test_layout.py
 
+# files
+backend/app/frequency_dictionary_en_82_765.txt
