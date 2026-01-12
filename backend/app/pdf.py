@@ -1,49 +1,61 @@
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
 from reportlab.lib.units import inch
+import tempfile
+import os
 
 
-def generate_pdf(structured_blocks, output_path):
-    c = canvas.Canvas(output_path, pagesize=A4)
-    width, height = A4
+def generate_pdf(structured_blocks):
+    """
+    Generates a clean PDF from structured document blocks.
+    Returns the file path.
+    """
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp_file.close()
 
-    x_margin = 1 * inch
-    y = height - 1 * inch
+    doc = SimpleDocTemplate(
+        tmp_file.name,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+
+    styles = getSampleStyleSheet()
+    elements = []
 
     for block in structured_blocks:
         block_type = block["type"]
-        text = block["content"]
+        content = block["content"]
+
+        if not content:
+            continue
 
         if block_type == "title":
-            c.setFont("Helvetica-Bold", 20)
-            c.drawString(x_margin, y, text)
-            y -= 40
+            style = styles["Title"]
+            elements.append(Paragraph(content, style))
+            elements.append(Spacer(1, 0.3 * inch))
 
         elif block_type == "heading":
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(x_margin, y, text)
-            y -= 30
+            style = styles["Heading2"]
+            elements.append(Paragraph(content, style))
+            elements.append(Spacer(1, 0.2 * inch))
 
         elif block_type == "bullet_list":
-            c.setFont("Helvetica", 11)
-            for line in text.split("•"):
-                c.drawString(x_margin + 15, y, "• " + line.strip())
-                y -= 18
+            bullets = content.split()
+            bullet_items = [
+                ListItem(Paragraph(b, styles["Normal"]))
+                for b in bullets
+            ]
+            elements.append(ListFlowable(bullet_items, bulletType="bullet"))
+            elements.append(Spacer(1, 0.2 * inch))
 
         else:  # paragraph
-            c.setFont("Helvetica", 11)
-            for line in text.split():
-                if y < 1 * inch:
-                    c.showPage()
-                    y = height - 1 * inch
-                    c.setFont("Helvetica", 11)
-                c.drawString(x_margin, y, line)
-                y -= 14
+            style = styles["Normal"]
+            elements.append(Paragraph(content, style))
+            elements.append(Spacer(1, 0.15 * inch))
 
-        y -= 10
-
-        if y < 1 * inch:
-            c.showPage()
-            y = height - 1 * inch
-
-    c.save()
+    doc.build(elements)
+    return tmp_file.name

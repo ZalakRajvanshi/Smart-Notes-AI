@@ -1,45 +1,71 @@
 def classify_block(block_bbox, ocr_lines, page_height):
     """
-    Classifies a block into semantic roles.
+    Classify a block based on position, size, and OCR content.
     """
     x, y, w, h = block_bbox
     num_lines = len(ocr_lines)
 
-    # Title: top of page, single large line
-    if y < page_height * 0.15 and num_lines == 1 and h > 60:
+    # -------------------
+    # TITLE
+    # -------------------
+    if y < page_height * 0.15 and num_lines <= 1 and h > 60:
         return "title"
 
-    # Heading: few lines, medium height
+    # -------------------
+    # HEADING
+    # -------------------
     if num_lines <= 2 and h < 120:
         return "heading"
 
-    # Bullets: multiple short lines
+    # -------------------
+    # BULLET LIST
+    # -------------------
     bullet_count = 0
     for line in ocr_lines:
-        text = line["text"].strip()
+        text = line.get("text", "").strip()
         if text.startswith(("-", "•", "*")):
             bullet_count += 1
 
     if bullet_count >= 1:
         return "bullet_list"
 
-    # Default
+    # -------------------
+    # DEFAULT
+    # -------------------
     return "paragraph"
+
 
 def build_structure(blocks_data, page_height):
     """
-    Converts blocks into structured document format.
+    Convert OCR blocks into structured, editable document format.
     """
     structured = []
 
     for block in blocks_data:
-        block_type = classify_block(
-            block["bbox"],
-            block["lines"],
-            page_height
-        )
+        bbox = block.get("bbox")
 
-        content = " ".join([l["text"] for l in block["lines"]])
+        if not bbox:
+            continue
+
+        # 🔑 Always expect line-based OCR now
+        lines = block.get("lines", [])
+
+        # Skip empty OCR blocks
+        if not lines:
+            continue
+
+        block_type = classify_block(bbox, lines, page_height)
+
+        # Merge line texts safely
+        content = " ".join(
+            l.get("text", "").strip()
+            for l in lines
+            if l.get("text", "").strip()
+        ).strip()
+
+        # Skip blocks with no readable content
+        if content == "":
+            continue
 
         structured.append({
             "type": block_type,

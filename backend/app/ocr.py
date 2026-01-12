@@ -1,50 +1,92 @@
+import torch
 import cv2
 import numpy as np
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
+# -----------------------------
+# DEVICE
+# -----------------------------
 
-class OCRModel:
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# -----------------------------
+# LOAD MODEL ONCE (GLOBAL)
+# -----------------------------
+
+processor = TrOCRProcessor.from_pretrained(
+    "microsoft/trocr-base-handwritten"
+)
+
+model = VisionEncoderDecoderModel.from_pretrained(
+    "microsoft/trocr-base-handwritten"
+).to(DEVICE)
+
+model.eval()
+
+# -----------------------------
+# LINE NORMALIZATION (CRITICAL)
+# -----------------------------
+
+def normalize_line_for_trocr(line_img: np.ndarray):
     """
-    Placeholder OCR model.
-    Will be replaced with trained CRNN weights.
+    Normalize a single line image to match TrOCR expectations.
+    Input: BGR or grayscale numpy image
+    Output: RGB image with height=32 or None if invalid
     """
+    if line_img is None:
+        return None
 
-    def __init__(self, model_path=None):
-        self.model_path = model_path
-        self.model = None  # loaded later
+    if line_img.size == 0:
+        return None
 
-    def preprocess(self, line_image):
-        """
-        Resize, normalize, prepare image for model.
-        """
-        gray = cv2.cvtColor(line_image, cv2.COLOR_BGR2GRAY)
-        resized = cv2.resize(gray, (200, 32))
-        normalized = resized / 255.0
-        return normalized
+    # Convert to grayscale if needed
+    if len(line_img.shape) == 3:
+        line_img = cv2.cvtColor(line_img, cv2.COLOR_BGR2GRAY)
 
-    def predict(self, line_image):
-        """
-        OCR inference on a single line image.
-        """
-        _ = self.preprocess(line_image)
+    h, w = line_img.shape
 
-        # TEMPORARY PLACEHOLDER
-        # Real decoding will come after training
-        return "[TEXT]"
+    # Hard reject tiny or empty crops
+    if h < 10 or w < 40:
+        return None
+
+    # Resize by HEIGHT only (preserve aspect ratio)
+    new_w = max(int(w * (32 / h)), 32)
+    line_img = cv2.resize(line_img, (new_w, 32), interpolation=cv2.INTER_CUBIC)
+
+    # Convert to RGB (TrOCR expects RGB)
+    line_img = cv2.cvtColor(line_img, cv2.COLOR_GRAY2RGB)
+
+    return line_img
 
 
-def ocr_block(block_image, line_segments, ocr_model):
+# -----------------------------
+# OCR FUNCTION (PUBLIC API)
+# -----------------------------
+
+def infer_line(line_img: np.ndarray) -> str:
     """
-    Runs OCR on each line segment inside a block.
+    OCR a single handwritten line image (numpy array).
+    Returns recognized text or empty string.
     """
-    results = []
+    norm = normalize_line_for_trocr(line_img)
+    if norm is None:
+        return ""
 
-    for (start, end) in line_segments:
-        line_img = block_image[start:end, :]
-        text = ocr_model.predict(line_img)
+    inputs = processor(
+        images=norm,
+        return_tensors="pt"
+    ).to(DEVICE)
 
-        results.append({
-            "text": text,
-            "line_bbox": [0, start, block_image.shape[1], end - start]
-        })
+    with torch.no_grad():
+        generated_ids = model.generate(
+            inputs.pixel_values,
+            max_length=128,
+            early_stopping=True
+        )
 
-    return results
+    text = processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True
+    )[0]
+
+    return text.strip()
