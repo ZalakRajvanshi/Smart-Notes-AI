@@ -1,3 +1,4 @@
+from .nlp import correct_text
 def classify_block(block_bbox, ocr_lines, page_height):
     """
     Classify a block based on position, size, and OCR content.
@@ -57,15 +58,13 @@ def build_structure(blocks_data, page_height):
         block_type = classify_block(bbox, lines, page_height)
 
         # Merge line texts safely
-        content = " ".join(
-            l.get("text", "").strip()
-            for l in lines
-            if l.get("text", "").strip()
-        ).strip()
+        raw_text = " ".join([l.get("text", "") for l in lines]).strip()
+
+        content = correct_text(raw_text)
 
         # Skip blocks with no readable content
         if content == "":
-            continue
+            continue    
 
         structured.append({
             "type": block_type,
