@@ -1,104 +1,111 @@
+import re
 from symspellpy import SymSpell, Verbosity
 from textblob import TextBlob
-import os
-import re
 
-# ---------------------------
-# SYMSPELL SETUP
-# ---------------------------
+# ===============================
+# SYMSPELL SETUP (CONSERVATIVE)
+# ===============================
 
-MAX_EDIT_DISTANCE = 2
-PREFIX_LENGTH = 7
+symspell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
 
-symspell = SymSpell(
-    max_dictionary_edit_distance=MAX_EDIT_DISTANCE,
-    prefix_length=PREFIX_LENGTH
+# Load frequency dictionary (small + safe)
+symspell.load_dictionary(
+    "backend/app/frequency_dictionary_en_82_765.txt",
+    term_index=0,
+    count_index=1
 )
 
-BASE_DIR = os.path.dirname(__file__)
-DICT_PATH = os.path.join(
-    BASE_DIR,
-    "frequency_dictionary_en_82_765.txt"
-)
+# ===============================
+# PROTECTED WORDS (CRITICAL)
+# ===============================
 
-if not symspell.word_count:
-    symspell.load_dictionary(
-        DICT_PATH,
-        term_index=0,
-        count_index=1
-    )
+PROTECTED_WORDS = {
+    # technical / domain
+    "methamphetamine",
+    "ethamphetamine",
+    "robotic",
+    "robotics",
+    "metallification",
+    "technology",
+    "technologies",
+    "machine",
+    "machines",
 
+    # common OCR-safe words
+    "wilson",
+    "dean",
+    "root"
+}
 
-# ---------------------------
-# SAFE WORD CORRECTION
-# ---------------------------
+# ===============================
+# SAFE TOKEN CORRECTION
+# ===============================
 
 def _safe_symspell(word: str) -> str:
-    if not word.isalpha():
+    clean = word.lower().strip(".,;:!?")
+
+    # 1️⃣ protect names / capitalized words
+    if word[0].isupper():
         return word
 
-    if len(word) >= 12:  # protect technical words
+    # 2️⃣ protect domain words
+    if clean in PROTECTED_WORDS:
         return word
 
+    # 3️⃣ protect numbers
+    if any(char.isdigit() for char in word):
+        return word
+
+    # 4️⃣ protect long words (likely technical)
+    if len(clean) >= 12:
+        return word
+
+    # 5️⃣ non alphabetic → skip
+    if not clean.isalpha():
+        return word
+
+    # 6️⃣ symspell lookup (TOP suggestion only)
     suggestions = symspell.lookup(
-        word,
-        Verbosity.CLOSEST,
-        max_edit_distance=MAX_EDIT_DISTANCE
+        clean,
+        Verbosity.TOP,
+        max_edit_distance=1
     )
 
-    if not suggestions:
-        return word
+    if suggestions:
+        return suggestions[0].term
 
-    best = suggestions[0].term
-
-    # prevent wild replacements
-    if abs(len(best) - len(word)) > 2:
-        return word
-
-    return best
+    return word
 
 
-# ---------------------------
-# TEXTBLOB (VERY LIMITED)
-# ---------------------------
-
-def _light_textblob(text: str) -> str:
-    """
-    Grammar smoothing ONLY.
-    No aggressive correction.
-    """
-    try:
-        blob = TextBlob(text)
-        corrected = str(blob.correct())
-
-        # Safety: reject if too different
-        if abs(len(corrected) - len(text)) > len(text) * 0.3:
-            return text
-
-        return corrected
-    except Exception:
-        return text
-
-
-# ---------------------------
-# MAIN ENTRY
-# ---------------------------
+# ===============================
+# MAIN NLP PIPELINE
+# ===============================
 
 def correct_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text:
+    if not text.strip():
         return text
 
-    # --- Step 1: SymSpell (token-level) ---
-    words = text.split(" ")
-    symspell_fixed = " ".join(
-        [_safe_symspell(w) for w in words]
-    )
+    # ---------------------------
+    # TOKEN LEVEL CORRECTION
+    # ---------------------------
+    tokens = re.findall(r"\w+|[^\w\s]", text)
+    corrected_tokens = [_safe_symspell(t) for t in tokens]
+    corrected = " ".join(corrected_tokens)
 
-    # --- Step 2: TextBlob (light polish) ---
-    final_text = _light_textblob(symspell_fixed)
+    # ---------------------------
+    # LIGHT GRAMMAR SMOOTHING
+    # ---------------------------
+    try:
+        blob = TextBlob(corrected)
+        corrected = str(blob.correct())
+    except Exception:
+        pass  # never crash pipeline
 
-    # Capitalize sentence
-    final_text = final_text[0].upper() + final_text[1:] if final_text else final_text
+    # ---------------------------
+    # CLEANUP (IMPORTANT)
+    # ---------------------------
+    corrected = re.sub(r"\s+([.,!?])", r"\1", corrected)
+    corrected = re.sub(r"\.\s*\.", ".", corrected)
+    corrected = re.sub(r"\s{2,}", " ", corrected)
 
-    return final_text
+    return corrected.strip()
