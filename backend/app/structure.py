@@ -1,75 +1,28 @@
 from .nlp import correct_text
-def classify_block(block_bbox, ocr_lines, page_height):
-    """
-    Classify a block based on position, size, and OCR content.
-    """
-    x, y, w, h = block_bbox
-    num_lines = len(ocr_lines)
 
-    # -------------------
-    # TITLE
-    # -------------------
-    if y < page_height * 0.15 and num_lines <= 1 and h > 60:
+
+def classify_block(bbox, lines, page_height):
+    _, y, _, h = bbox
+    if y < page_height * 0.15 and len(lines) <= 1:
         return "title"
-
-    # -------------------
-    # HEADING
-    # -------------------
-    if num_lines <= 2 and h < 120:
+    if len(lines) <= 2:
         return "heading"
-
-    # -------------------
-    # BULLET LIST
-    # -------------------
-    bullet_count = 0
-    for line in ocr_lines:
-        text = line.get("text", "").strip()
-        if text.startswith(("-", "•", "*")):
-            bullet_count += 1
-
-    if bullet_count >= 1:
-        return "bullet_list"
-
-    # -------------------
-    # DEFAULT
-    # -------------------
     return "paragraph"
 
 
-def build_structure(blocks_data, page_height):
-    """
-    Convert OCR blocks into structured, editable document format.
-    """
+def build_structure(blocks, page_height):
     structured = []
 
-    for block in blocks_data:
-        bbox = block.get("bbox")
+    for b in blocks:
+        lines = b["lines"]
+        raw = " ".join(l["text"] for l in lines)
+        clean = correct_text(raw)
 
-        if not bbox:
-            continue
-
-        # 🔑 Always expect line-based OCR now
-        lines = block.get("lines", [])
-
-        # Skip empty OCR blocks
-        if not lines:
-            continue
-
-        block_type = classify_block(bbox, lines, page_height)
-
-        # Merge line texts safely
-        raw_text = " ".join([l.get("text", "") for l in lines]).strip()
-
-        content = correct_text(raw_text)
-
-        # Skip blocks with no readable content
-        if content == "":
-            continue    
-
-        structured.append({
-            "type": block_type,
-            "content": content,
-            "editable": True
-        })
+        if clean.strip():
+            structured.append({
+                "type": classify_block(b["bbox"], lines, page_height),
+                "content": clean,
+                "editable": True
+            })
 
     return structured
